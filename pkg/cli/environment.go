@@ -41,6 +41,9 @@ const defaultMaxHistory = 10
 // defaultBurstLimit sets the default client-side throttling limit
 const defaultBurstLimit = 100
 
+// defaultQPS is...
+const defaultQPS = 5.0
+
 // EnvSettings describes all of the environment settings.
 type EnvSettings struct {
 	namespace string
@@ -72,6 +75,9 @@ type EnvSettings struct {
 	PluginsDirectory string
 	// MaxHistory is the max release history maintained.
 	MaxHistory int
+	// QPS indicates the maximum QPS to the master from this client.
+	// If it's zero, the created RESTClient will use DefaultQPS: 5
+	QPS float32
 	// BurstLimit is the default client-side throttling limit.
 	BurstLimit int
 }
@@ -91,6 +97,7 @@ func New() *EnvSettings {
 		RepositoryConfig: envOr("HELM_REPOSITORY_CONFIG", helmpath.ConfigPath("repositories.yaml")),
 		RepositoryCache:  envOr("HELM_REPOSITORY_CACHE", helmpath.CachePath("repository")),
 		BurstLimit:       envIntOr("HELM_BURST_LIMIT", defaultBurstLimit),
+		QPS:              envFloat32Or("HELM_QPS", defaultQPS),
 	}
 	env.Debug, _ = strconv.ParseBool(os.Getenv("HELM_DEBUG"))
 
@@ -106,6 +113,7 @@ func New() *EnvSettings {
 		ImpersonateGroup: &env.KubeAsGroups,
 		WrapConfigFn: func(config *rest.Config) *rest.Config {
 			config.Burst = env.BurstLimit
+			config.QPS = env.QPS
 			return config
 		},
 	}
@@ -127,6 +135,7 @@ func (s *EnvSettings) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&s.RepositoryConfig, "repository-config", s.RepositoryConfig, "path to the file containing repository names and URLs")
 	fs.StringVar(&s.RepositoryCache, "repository-cache", s.RepositoryCache, "path to the file containing cached repository indexes")
 	fs.IntVar(&s.BurstLimit, "burst-limit", s.BurstLimit, "client-side default throttling limit")
+	fs.Float32Var(&s.QPS, "qps", s.QPS, "client-side default queries per second limit to the master")
 }
 
 func envOr(name, def string) string {
@@ -146,6 +155,18 @@ func envIntOr(name string, def int) int {
 		return def
 	}
 	return ret
+}
+
+func envFloat32Or(name string, def float32) float32 {
+	if name == "" {
+		return def
+	}
+	envVal := envOr(name, fmt.Sprintf("%f", def))
+	ret, err := strconv.ParseFloat(envVal, 32)
+	if err != nil {
+		return def
+	}
+	return float32(ret)
 }
 
 func envCSV(name string) (ls []string) {
@@ -170,6 +191,7 @@ func (s *EnvSettings) EnvVars() map[string]string {
 		"HELM_NAMESPACE":         s.Namespace(),
 		"HELM_MAX_HISTORY":       strconv.Itoa(s.MaxHistory),
 		"HELM_BURST_LIMIT":       strconv.Itoa(s.BurstLimit),
+		"HELM_QPS":               fmt.Sprintf("%f", s.QPS),
 
 		// broken, these are populated from helm flags and not kubeconfig.
 		"HELM_KUBECONTEXT":   s.KubeContext,
